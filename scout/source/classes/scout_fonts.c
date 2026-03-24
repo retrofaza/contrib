@@ -159,7 +159,7 @@ void FlushFonts(void)
     Forbid();
 
     tf = (struct TextFont *)GfxBase->TextFonts.lh_Head;
-    while (tf) {
+    while (tf->tf_Message.mn_Node.ln_Succ) {
         struct TextFont *_tf;
 
         _tf = (struct TextFont *)tf->tf_Message.mn_Node.ln_Succ;

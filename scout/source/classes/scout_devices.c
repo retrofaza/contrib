@@ -148,7 +148,7 @@ void FlushDevices( void )
     Forbid();
 
     dd = (struct Device *)SysBase->DeviceList.lh_Head;
-    while (dd) {
+    while (dd->dd_Library.lib_Node.ln_Succ) {
         struct Device *_dd;
 
         _dd = (struct Device *)dd->dd_Library.lib_Node.ln_Succ;

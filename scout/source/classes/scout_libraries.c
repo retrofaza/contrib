@@ -149,7 +149,7 @@ void FlushLibraries( void )
     Forbid();
 
     lib = (struct Library *)SysBase->LibList.lh_Head;
-    while (lib) {
+    while (lib->lib_Node.ln_Succ) {
         struct Library *_lib;
 
         _lib = (struct Library *)lib->lib_Node.ln_Succ;

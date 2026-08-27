@@ -1,0 +1,392 @@
+diff -ruN wget-1.20.3/lib/fpurge.c wget-1.20.3.aros/lib/fpurge.c
+--- wget-1.20.3/lib/fpurge.c	2026-08-30 16:15:33.916191599 +0200
++++ wget-1.20.3.aros/lib/fpurge.c	2026-08-30 16:15:34.034399702 +0200
+@@ -140,6 +140,8 @@
+ # elif defined EPLAN9               /* Plan9 */
+   fp->rp = fp->wp = fp->lp = fp->buf;
+   return 0;
++# elif defined __AROS__             /* AROS (posixc stdio does no userspace buffering) */
++  return 0;
+ # else
+ #  error "Please port gnulib fpurge.c to your platform! Look at the definitions of fflush, setvbuf and ungetc on your system, then report this to bug-gnulib."
+ # endif
+diff -ruN wget-1.20.3/lib/freading.c wget-1.20.3.aros/lib/freading.c
+--- wget-1.20.3/lib/freading.c	2026-08-30 16:15:33.893704369 +0200
++++ wget-1.20.3.aros/lib/freading.c	2026-08-30 16:15:34.033059766 +0200
+@@ -68,6 +68,9 @@
+   if (fp->state == 0 /* CLOSED */ || fp->state == 4 /* WR */)
+     return 0;
+   return (fp->state == 3 /* RD */ && (fp->bufl == 0 || fp->rp < fp->wp));
++# elif defined __AROS__               /* AROS (posixc stdio) */
++  struct aros_posixc_FILE { int fd; int flags; };
++  return (((struct aros_posixc_FILE *) fp)->flags & 0x0008L /* __POSIXC_STDIO_READ */) != 0;
+ # else
+ #  error "Please port gnulib freading.c to your platform!"
+ # endif
+diff -ruN wget-1.20.3/lib/getprogname.c wget-1.20.3.aros/lib/getprogname.c
+--- wget-1.20.3/lib/getprogname.c	2026-08-30 16:15:33.915502086 +0200
++++ wget-1.20.3.aros/lib/getprogname.c	2026-08-30 16:15:34.016247790 +0200
+@@ -51,6 +51,12 @@
+ # include <sys/procfs.h>
+ #endif
+ 
++#ifdef __AROS__
++# include <proto/dos.h>
++# include <dos/dos.h>
++# include <string.h>
++#endif
++
+ #include "dirname.h"
+ 
+ #ifndef HAVE_GETPROGNAME             /* not Mac OS X, FreeBSD, NetBSD, OpenBSD >= 5.4, Cygwin */
+@@ -244,6 +250,11 @@
+         }
+     }
+   return NULL;
++# elif defined __AROS__                                        /* AROS */
++  static char progname[256];
++  if (GetProgramName (progname, sizeof (progname)))
++    return progname;
++  return NULL;
+ # else
+ #  error "getprogname module not ported to this OS"
+ # endif
+diff -ruN wget-1.20.3/lib/unistd.in.h wget-1.20.3.aros/lib/unistd.in.h
+--- wget-1.20.3/lib/unistd.in.h	2026-08-30 16:15:33.907961874 +0200
++++ wget-1.20.3.aros/lib/unistd.in.h	2026-08-30 16:15:34.032127100 +0200
+@@ -705,6 +705,12 @@
+ #if @GNULIB_GETDTABLESIZE@
+ /* Return the maximum number of file descriptors in the current process.
+    In POSIX, this is same as sysconf (_SC_OPEN_MAX).  */
++# if defined __AROS__
++/* AROS's <defines/bsdsocket.h> (pulled in via <netdb.h>) defines this
++   function as a function-like macro, which clashes with the declaration
++   below.  */
++#  undef getdtablesize
++# endif
+ # if @REPLACE_GETDTABLESIZE@
+ #  if !(defined __cplusplus && defined GNULIB_NAMESPACE)
+ #   undef getdtablesize
+diff -ruN wget-1.20.3/src/Makefile.in wget-1.20.3.aros/src/Makefile.in
+--- wget-1.20.3/src/Makefile.in	2026-08-30 16:15:33.867986614 +0200
++++ wget-1.20.3.aros/src/Makefile.in	2026-08-30 16:15:34.006781730 +0200
+@@ -323,7 +323,7 @@
+ 	res.$(OBJEXT) retr.$(OBJEXT) spider.$(OBJEXT) url.$(OBJEXT) \
+ 	warc.$(OBJEXT) $(am__objects_5) utils.$(OBJEXT) \
+ 	exits.$(OBJEXT) build_info.$(OBJEXT) $(am__objects_6) \
+-	$(am__objects_7)
++	$(am__objects_7) aros.$(OBJEXT)
+ nodist_wget_OBJECTS = version.$(OBJEXT)
+ wget_OBJECTS = $(am_wget_OBJECTS) $(nodist_wget_OBJECTS)
+ wget_LDADD = $(LDADD)
+@@ -1560,6 +1560,7 @@
+ 		http.c init.c log.c main.c netrc.c progress.c ptimer.c	\
+ 		recur.c res.c retr.c spider.c url.c warc.c $(XATTR_OBJ) \
+ 		utils.c exits.c build_info.c $(IRI_OBJ) $(METALINK_OBJ)	\
++		aros.c	\
+ 		css-url.h css-tokens.h connect.h convert.h cookies.h	\
+ 		ftp.h hash.h host.h hsts.h  html-parse.h html-url.h	\
+ 		http.h http-ntlm.h init.h log.h mswindows.h netrc.h	\
+diff -ruN wget-1.20.3/src/aros.c wget-1.20.3.aros/src/aros.c
+--- wget-1.20.3/src/aros.c	1970-01-01 01:00:00.000000000 +0100
++++ wget-1.20.3.aros/src/aros.c	2026-08-30 16:15:34.002239783 +0200
+@@ -0,0 +1,53 @@
++/* AROS-specific initialization for wget: open bsdsocket.library.
++   Modeled on the AROS port of cURL (lib/aros.c).  */
++
++#ifdef __AROS__ /* AROS */
++
++#include <errno.h>
++#include <aros/symbolsets.h>
++#include <exec/libraries.h>
++#include <proto/exec.h>
++#include <proto/dos.h>
++#include <proto/bsdsocket.h>
++#include <bsdsocket/socketbasetags.h>
++
++struct Library * __attribute__((weak)) SocketBase = NULL;
++
++static void
++aros_cleanup (void)
++{
++  if (SocketBase)
++    {
++      CloseLibrary (SocketBase);
++      SocketBase = NULL;
++    }
++}
++
++static BOOL
++aros_init (void)
++{
++  if (!SocketBase)
++    SocketBase = OpenLibrary ("bsdsocket.library", 4);
++
++  if (!SocketBase)
++    {
++      Printf ("No TCP/IP Stack running!\n", "");
++      return FALSE;
++    }
++
++  if (SocketBaseTags (
++        SBTM_SETVAL (SBTC_ERRNOPTR (sizeof (errno))), (IPTR) &errno,
++        SBTM_SETVAL (SBTC_LOGTAGPTR), (IPTR) "wget",
++        TAG_DONE))
++    {
++      Printf ("SocketBaseTags ERROR\n", "");
++      return FALSE;
++    }
++
++  return TRUE;
++}
++
++ADD2INIT (aros_init, -50)
++ADD2EXIT (aros_cleanup, -50)
++
++#endif /* __AROS__ */
+diff -ruN wget-1.20.3/src/connect.c wget-1.20.3.aros/src/connect.c
+--- wget-1.20.3/src/connect.c	2026-08-30 16:15:33.878937554 +0200
++++ wget-1.20.3.aros/src/connect.c	2026-08-30 16:15:34.006281916 +0200
+@@ -62,6 +62,16 @@
+ 
+ #include <stdint.h>
+ 
++#ifdef __AROS__
++/* AROS's posixc read()/write()/close() operate on dos.library handles,
++   which do not work on bsdsocket (lwIP) socket handles, so plain socket
++   I/O must use the Amiga bsdsocket recv()/send()/CloseSocket() instead.
++   (HTTPS still works because OpenSSL does its own socket I/O.)  */
++# define read(fd, buf, cnt) recv (fd, buf, cnt, 0)
++# define write(fd, buf, cnt) send (fd, buf, cnt, 0)
++# define close(fd) CloseSocket (fd)
++#endif
++
+ /* Define sockaddr_storage where unavailable (presumably on IPv4-only
+    hosts).  */
+ 
+diff -ruN wget-1.20.3/src/init.c wget-1.20.3.aros/src/init.c
+--- wget-1.20.3/src/init.c	2026-08-30 16:15:33.877776452 +0200
++++ wget-1.20.3.aros/src/init.c	2026-08-30 16:15:34.006834339 +0200
+@@ -518,6 +518,13 @@
+   static char *buf = NULL;
+   static char *home, *ret;
+ 
++#ifdef __AROS__
++  /* AROS has no POSIX home directory; getpwuid() would return the bogus
++     "/home" which posixc cannot resolve (it triggers a "Please insert
++     volume Home" requester).  Use the persistent ENV archive instead,
++     like the old AROS/Amiga port did.  */
++  home = "SYS:Prefs/Env-Archive";
++#else
+   if (!home)
+     {
+       home = getenv ("HOME");
+@@ -556,6 +563,7 @@
+ #endif /* WINDOWS */
+         }
+     }
++#endif /* __AROS__ */
+ 
+   ret = home ? xstrdup (home) : NULL;
+   xfree (buf);
+@@ -620,6 +628,16 @@
+ char *
+ wgetrc_file_name (void)
+ {
++#ifdef __AROS__
++  /* On AROS/AmigaOS all the configs are in 'ENV:'.  */
++  const char *file = "ENV:wgetcfg";
++  if (!file_exists_p (file, NULL))
++    {
++      fprintf (stderr, _("%s: %s doesn't exist.\n"), exec_name, file);
++      exit (WGET_EXIT_GENERIC_ERROR);
++    }
++  return xstrdup (file);
++#else
+   char *file = wgetrc_env_file_name ();
+   if (file && *file)
+     return file;
+@@ -646,6 +664,7 @@
+ #endif /* WINDOWS */
+ 
+   return file;
++#endif /* __AROS__ */
+ }
+ 
+ /* Return values of parse_line. */
+diff -ruN wget-1.20.3/src/log.c wget-1.20.3.aros/src/log.c
+--- wget-1.20.3/src/log.c	2026-08-30 16:15:33.875083117 +0200
++++ wget-1.20.3.aros/src/log.c	2026-08-30 16:15:34.004558540 +0200
+@@ -967,6 +967,12 @@
+ check_redirect_output (void)
+ {
+ #ifndef WINDOWS
++#if defined __AROS__
++  /* AROS has no process groups/job control and posixc's getpgrp() is
++     not implemented; this check would only print a warning.  wget
++     always runs in the foreground here.  */
++  return;
++#else
+   /* If it was redirected already to log file by SIGHUP, SIGUSR1 or -o parameter,
+    * it was permanent.
+    * If there was no SIGHUP or SIGUSR1 and shell is interactive
+@@ -986,5 +992,6 @@
+           redirect_output (false,NULL);
+         }
+     }
++#endif /* __AROS__ */
+ #endif /* WINDOWS */
+ }
+diff -ruN wget-1.20.3/src/main.c wget-1.20.3.aros/src/main.c
+--- wget-1.20.3/src/main.c	2026-08-30 16:15:33.874724807 +0200
++++ wget-1.20.3.aros/src/main.c	2026-08-30 16:15:34.005456620 +0200
+@@ -1091,6 +1091,11 @@
+ static void
+ run_use_askpass (char *question, char **answer)
+ {
++#ifdef __AROS__
++  /* AROS has no fork()/posix_spawn(), so --use-askpass cannot work.  */
++  fprintf (stderr, _("--use-askpass is not supported on AROS\n"));
++  exit (WGET_EXIT_GENERIC_ERROR);
++#else
+   char tmp[1024];
+   pid_t pid;
+   int status;
+@@ -1155,6 +1160,7 @@
+     bytes = p - tmp;
+ 
+   *answer = xmemdup0 (tmp, bytes);
++#endif /* !__AROS__ */
+ }
+ 
+ /* set the user name and password*/
+diff -ruN wget-1.20.3/src/openssl.c wget-1.20.3.aros/src/openssl.c
+--- wget-1.20.3/src/openssl.c	2026-08-30 16:15:33.877571664 +0200
++++ wget-1.20.3.aros/src/openssl.c	2026-08-30 16:15:34.005415566 +0200
+@@ -175,8 +175,14 @@
+   if (ssl_true_initialized == 0)
+     {
+ #if OPENSSL_API_COMPAT < 0x10100000L
++#if !defined __AROS__
++      /* On AROS, OPENSSLDIR is compiled in as /Development/etc/ssl,
++         which is not a valid runtime path (Development: is normally not
++         assigned) and would trigger a "Please insert volume
++         Development" requester.  Skip loading the default config.  */
+       OPENSSL_config (NULL);
+ #endif
++#endif
+       ssl_true_initialized = 1;
+     }
+ #endif
+@@ -199,9 +205,12 @@
+ #ifndef OPENSSL_NO_ENGINE
+   ENGINE_load_builtin_engines();
+ #endif
++#if !defined __AROS__
++  /* See the comment above about the bogus /Development/etc/ssl path.  */
+   CONF_modules_load_file(NULL, NULL,
+       CONF_MFLAGS_DEFAULT_SECTION|CONF_MFLAGS_IGNORE_MISSING_FILE);
+ #endif
++#endif
+ #if OPENSSL_API_COMPAT >= 0x10100000L
+   OPENSSL_init_ssl(0, NULL);
+ #else
+@@ -325,7 +334,14 @@
+       goto error;
+     }
+ 
++  #if !defined __AROS__
++  /* On AROS, SSL_CTX_set_default_verify_paths() would look in the
++     compiled-in OPENSSLDIR (/Development/etc/ssl), a bogus runtime path
++     that triggers a "Please insert volume Development" requester.  Use
++     SSL_CTX_load_verify_locations() below instead, which only acts on
++     user-supplied --ca-certificate/--ca-directory.  */
+   SSL_CTX_set_default_verify_paths (ssl_ctx);
++#endif
+   SSL_CTX_load_verify_locations (ssl_ctx, opt.ca_cert, opt.ca_directory);
+ 
+ #ifdef X509_V_FLAG_PARTIAL_CHAIN
+diff -ruN wget-1.20.3/src/utils.c wget-1.20.3.aros/src/utils.c
+--- wget-1.20.3/src/utils.c	2026-08-30 16:15:33.871051674 +0200
++++ wget-1.20.3.aros/src/utils.c	2026-08-30 16:15:34.004477569 +0200
+@@ -83,7 +83,9 @@
+ # endif
+ #endif
+ 
+-#if defined HAVE_SIGSETJMP || defined HAVE_SIGBLOCK
++#if (defined HAVE_SIGSETJMP || defined HAVE_SIGBLOCK) && !defined __AROS__
++/* AROS's posixc provides sigsetjmp/siglongjmp but no alarm() or
++   setitimer(), so the signal-based timeout machinery cannot work.  */
+ # define USE_SIGNAL_TIMEOUT
+ #endif
+ 
+@@ -470,6 +472,18 @@
+   return;
+ }
+ 
++#elif defined __AROS__
++
++bool
++fork_to_background (void)
++{
++  /* AROS has no fork(), so we cannot really go into the background.
++     Just keep running in the foreground.  */
++  logprintf (LOG_NOTQUIET,
++	     _("Background mode is not supported on AROS; running in the foreground.\n"));
++  return false;
++}
++
+ #else /* def __VMS */
+ 
+ #if !defined(WINDOWS) && !defined(MSDOS)
+@@ -580,10 +594,18 @@
+     return ret >= 0;
+ #else
+   errno = 0;
++#if defined __AROS__
++  /* AROS's uid mapping (getuid() vs. st_uid) does not match for ordinary
++     files, so the readability check below would wrongly report existing
++     files as non-existent.  Just check for existence like old wget did.  */
++  if (stat (filename, &buf) == 0 && S_ISREG(buf.st_mode))
++#else
+   if (stat (filename, &buf) == 0 && S_ISREG(buf.st_mode) &&
+               (((S_IRUSR & buf.st_mode) && (getuid() == buf.st_uid))  ||
+                ((S_IRGRP & buf.st_mode) && group_member(buf.st_gid))  ||
+-                (S_IROTH & buf.st_mode))) {
++                (S_IROTH & buf.st_mode)))
++#endif
++  {
+     if (fstats != NULL)
+     {
+       fstats->access_err = 0;
+diff -ruN wget-1.20.3/src/wget.h wget-1.20.3.aros/src/wget.h
+--- wget-1.20.3/src/wget.h	2026-08-30 16:15:33.873487586 +0200
++++ wget-1.20.3.aros/src/wget.h	2026-08-30 16:15:34.003140330 +0200
+@@ -42,6 +42,27 @@
+ # define WINDOWS
+ #endif
+ 
++#if defined __AROS__
++/* AROS's posixc does not define _PC_NAME_MAX (pathconf() returns -1 for
++   it anyway, so get_max_length() harmlessly gives up on filename
++   shortening).  */
++# ifndef _PC_NAME_MAX
++#  define _PC_NAME_MAX 9
++# endif
++/* Configure defines SYSTEM_WGETRC as /Development/etc/wgetrc (because
++   of --prefix=/Development), which on AROS resolves to the Development:
++   assign and would trigger a "Please insert volume Development"
++   requester.  AROS uses ENV:wgetcfg instead, so disable it.  */
++# undef SYSTEM_WGETRC
++/* AROS's <sys/socket.h> does not provide this IPv6 macro.  */
++# ifdef ENABLE_IPV6
++#  ifndef IN6_ARE_ADDR_EQUAL
++#   define IN6_ARE_ADDR_EQUAL(a,b) \
++      (memcmp ((a), (b), sizeof (struct in6_addr)) == 0)
++#  endif
++# endif
++#endif
++
+ /* Include these, so random files need not include them.  */
+ #include "sysdep.h"
+ 

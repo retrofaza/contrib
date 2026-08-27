@@ -1,25 +1,55 @@
-# Metamake file for wget (AROS)
+# Copyright 2018-2026, The AROS Development Team. All rights reserved.
+# $Id$
 
 include $(SRCDIR)/config/aros-contrib.cfg
 
-#MM- aros-tcpip-apps : aros-tcpip-apps-wget
+#MM- aros-tcpip-apps-wget : development-wget aros-tcpip-apps-wget-cpy
+#MM- development-wget : contrib-openssl
 
-#MM- aros-tcpip-apps-wget : aros-tcpip-apps-wget-bin aros-tcpip-apps-wget-cpy \
-#MM  aros-tcpip-apps-wget-cpy-doc aros-tcpip-apps-wget-sample
+REPOSITORIES := https://ftp.gnu.org/gnu/wget \
+    https://ftpmirror.gnu.org/wget
+
+WGET_OPTIONS := \
+    --with-ssl=openssl \
+    --disable-iri \
+    --disable-opie \
+    --disable-digest \
+    --disable-ntlm \
+    --disable-debug \
+    --disable-threads \
+    --disable-pcre2 \
+    --disable-pcre
+
+%fetch_and_build_gnu_development package=wget version=1.20.3 \
+    suffixes="tar.gz" package_repo="$(REPOSITORIES)" patch=yes \
+    extraoptions="$(WGET_OPTIONS)" postconfigure="development-wget-fixconfig"
 
 TARGETDIR := $(AROS_CONTRIB)/Networking/Apps/WGet
+SRCDIRWGET := $(PORTSDIR)/wget/wget-1.20.3
 
-CPYFILES := AUTHORS ChangeLog ChangeLog.Amiga COPYING NEWS README README.AROS TODO
+CPYFILES := AUTHORS COPYING NEWS README
 DOCFILES := wget.info sample.wgetrc
 
-%copy_files_q mmake=aros-tcpip-apps-wget-cpy files=$(CPYFILES) src=. dst=$(TARGETDIR)
+#MM
+development-wget-fixconfig :
+	@$(ECHO) "Applying config fixes for wget"
+	@for file in $(GENDIR)/$(CURDIR)/wget/src/config.h; \
+	do \
+	$(SED) -i -e 's@#define HAVE_IPV6 1@/\* #undef HAVE_IPV6 \*/@' $$file; \
+	$(SED) -i -e 's@#define ENABLE_IPV6 1@/\* #undef ENABLE_IPV6 \*/@' $$file; \
+	done
 
-%copy_files_q mmake=aros-tcpip-apps-wget-cpy-doc files=$(DOCFILES) src=doc dst=$(TARGETDIR)/doc 
+%copy_files_q mmake=aros-tcpip-apps-wget-cpy-bin files=wget src=$(AROS_DEVELOPER)/bin dst=$(TARGETDIR)
+%copy_files_q mmake=aros-tcpip-apps-wget-cpy-files files=$(CPYFILES) src=$(SRCDIRWGET) dst=$(TARGETDIR)
+%copy_files_q mmake=aros-tcpip-apps-wget-cpy-doc files=$(DOCFILES) src=doc dst=$(TARGETDIR)/doc
+
+#MM
+aros-tcpip-apps-wget-cpy : aros-tcpip-apps-wget-cpy-bin aros-tcpip-apps-wget-cpy-files aros-tcpip-apps-wget-cpy-doc aros-tcpip-apps-wget-sample
 
 #MM
 aros-tcpip-apps-wget-sample : $(AROS_ENVARC)/wgetcfg
 
-$(AROS_ENVARC)/wgetcfg : ./doc/sample.wgetrc
+$(AROS_ENVARC)/wgetcfg : doc/sample.wgetrc
 	@$(CP) $^ $@
 
 %common

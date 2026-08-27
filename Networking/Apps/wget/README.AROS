@@ -2,12 +2,25 @@ GNU Wget is a free software package for retrieving files using HTTP, HTTPS and F
 the most widely-used Internet protocols. It is a non-interactive commandline tool,
 so it may easily be called from scripts, cron jobs, terminals without X-Windows support, etc.
 
-The AROS port is based on an CVS snapshot (2007-02-15) of Diego Cassoran's AMIGA port
-http://amiga.cvs.sourceforge.net/amiga/wget/
+This port is based on GNU Wget 1.20.3, compiled with HTTPS support via the AROS
+port of OpenSSL 1.1.0h.
+
+The build follows the AROS contrib port conventions: the sources are fetched,
+patched with wget-1.20.3-aros.diff and built with %fetch_and_build_gnu_development
+(see mmakefile.src). The binary is installed both under Development/bin and in
+Extras:Networking/Apps/Wget.
 
 When you start wget the first time it will complain that it misses the file env:wgetcfg.
-You can either create an empty file (echo "" >env:config) or better copy the file sample.wgetrc
-(copy sample.wgetrc env:wgetcfg and copy sample.wgetrc envarc:wgetcfg).
+You can either create an empty file (echo "" >env:wgetcfg) or better copy the file
+sample.wgetrc (copy sample.wgetrc env:wgetcfg and copy sample.wgetrc envarc:wgetcfg).
+The build already installs a default sample into ENVARC:wgetcfg.
+
+Notes on the AROS port:
+- Background mode (-b) and --use-askpass are not supported (AROS has no fork()).
+- IPv6 is disabled (AROS network stacks are IPv4 based).
+- The OpenSSL version shipped with AROS is 1.1.0h, so TLS 1.3 is not available.
+- --timeout/--connect-timeout/--read-timeout for connect, DNS and SSL reads are
+  not enforced by a signal/alarm (AROS has no alarm()/setitimer()); the
+  underlying network stack's own timeouts apply instead.
 
 Type wget --help for a short help. The file wget.info contains documentation.
-
